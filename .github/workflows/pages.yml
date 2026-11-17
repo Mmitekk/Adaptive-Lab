@@ -1,0 +1,106 @@
+name: Adaptive Lab — audit and Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Полный HTTP(S) URL. Пусто — только обновить Pages.'
+        required: false
+        type: string
+      width:
+        description: 'Ширина экрана, 280–2560 px'
+        default: '390'
+        type: string
+      height:
+        description: 'Высота экрана, 280–2560 px'
+        default: '844'
+        type: string
+      mode:
+        description: 'quick — один экран; full — 4–5 экранов'
+        default: full
+        type: choice
+        options: [quick, full]
+      mobile:
+        description: 'Мобильный User-Agent и касания для выбранного экрана'
+        default: true
+        type: boolean
+      publish:
+        description: 'Согласен опубликовать URL, отчёт и снимки на Pages. Не проверяю конфиденциальные страницы.'
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: adaptive-lab-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Restore previously published reports
+        run: node scripts/restore-reports.js
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - name: Install isolated Chromium
+        if: github.event_name == 'workflow_dispatch' && inputs.url != ''
+        run: npx playwright install --with-deps chromium
+      - name: Build local UI for server tests
+        run: npm run build
+      - name: Run security and storage tests
+        run: npm test
+      - name: Audit public page
+        if: github.event_name == 'workflow_dispatch' && inputs.url != ''
+        run: npm run audit:actions
+        env:
+          AUDIT_URL: ${{ inputs.url }}
+          AUDIT_WIDTH: ${{ inputs.width }}
+          AUDIT_HEIGHT: ${{ inputs.height }}
+          AUDIT_MODE: ${{ inputs.mode }}
+          AUDIT_MOBILE: ${{ inputs.mobile }}
+          AUDIT_PUBLISH: ${{ inputs.publish }}
+      - name: Build static Pages application
+        run: npm run build:pages
+      - name: Save report history for the next run
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-lab-reports
+          path: .pages-reports/*.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 90
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-pages
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

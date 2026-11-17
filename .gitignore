@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-pages/
+.pages-reports/
+.audit-output/
+.artifact-restore/
+data/
+.runtime.json
+*.log
+.env
+.env.*
+!.env.example
+ui-verified.png
+mobile-check.png
+artifacts/
